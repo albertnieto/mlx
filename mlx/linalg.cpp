@@ -927,12 +927,11 @@ array taylor8_optimized(const array& a, StreamOrDevice s) {
 
   auto I = identity_like(a, s);
   auto a2 = matmul(a, a, s);
-  auto a4 = matmul(
-      a2, add(multiply(sc(x1), a, s), multiply(sc(x2), a2, s), s), s);
+  auto a4 =
+      matmul(a2, add(multiply(sc(x1), a, s), multiply(sc(x2), a2, s), s), s);
   auto a8 = matmul(
       add(multiply(sc(x3), a2, s), a4, s),
-      add(add(
-              add(multiply(sc(x4), I, s), multiply(sc(x5), a, s), s),
+      add(add(add(multiply(sc(x4), I, s), multiply(sc(x5), a, s), s),
               multiply(sc(x6), a2, s),
               s),
           multiply(sc(x7), a4, s),
@@ -947,8 +946,8 @@ array expm(const array& a, StreamOrDevice s /* = {} */) {
   if (a.ndim() < 2) {
     std::ostringstream msg;
     msg << "[linalg::expm] Got array with too few dimensions. "
-        << "Expected an array with at least 2 dimensions but got "
-        << a.ndim() << " dimensions instead.";
+        << "Expected an array with at least 2 dimensions but got " << a.ndim()
+        << " dimensions instead.";
     throw std::invalid_argument(msg.str());
   }
   if (a.shape(-1) != a.shape(-2)) {
@@ -979,18 +978,19 @@ array expm(const array& a, StreamOrDevice s /* = {} */) {
   }
 
   // Induced 1-norm: max column sum of |A|.
-  auto norm = max(sum(abs(work, s), /* axis = */ -2, /* keepdims = */ false, s),
-                  /* axis = */ -1,
-                  /* keepdims = */ false,
-                  s);
+  auto norm =
+      max(sum(abs(work, s), /* axis = */ -2, /* keepdims = */ false, s),
+          /* axis = */ -1,
+          /* keepdims = */ false,
+          s);
 
   constexpr int max_squarings = 16;
   constexpr double theta = 0.5;
   auto one = array(1.0, float32);
   auto ratio = maximum(divide(norm, array(theta), s), one, s);
   ratio = astype(ratio, float32, s);
-  auto s_int = maximum(
-      astype(ceil(log2(ratio, s), s), int32, s), array(0, int32), s);
+  auto s_int =
+      maximum(astype(ceil(log2(ratio, s), s), int32, s), array(0, int32), s);
 
   auto scale = power(array(2.0, float32), astype(s_int, float32, s), s);
   scale = unsqueeze_to_ndim(std::move(scale), static_cast<int>(work.ndim()), s);

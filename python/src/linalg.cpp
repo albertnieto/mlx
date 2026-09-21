@@ -734,9 +734,7 @@ void init_linalg(nb::module_& parent_module) {
 
   m.def(
       "expm",
-      [](const mx::array& a, mx::StreamOrDevice s) {
-        return mx::linalg::expm(a, s);
-      },
+      &mx::linalg::expm,
       "a"_a,
       nb::kw_only(),
       "stream"_a = nb::none(),

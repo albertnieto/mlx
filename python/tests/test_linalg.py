@@ -1001,6 +1001,18 @@ class TestLinalg(mlx_tests.MLXTestCase):
         a = mx.array([[0.2]])
         self.assertTrue(mx.allclose(mx.linalg.expm(a), mx.exp(a)).item())
 
+        d = mx.array([[0.3, 0.0], [0.0, -0.4]])
+        self.assertTrue(
+            mx.allclose(
+                mx.linalg.expm(d), mx.diag(mx.exp(mx.array([0.3, -0.4])))
+            ).item()
+        )
+        t = 0.7
+        rot = mx.array([[0.0, -t], [t, 0.0]])
+        c, s_ = np.cos(t), np.sin(t)
+        ref = mx.array([[c, -s_], [s_, c]], dtype=mx.float32)
+        self.assertTrue(mx.allclose(mx.linalg.expm(rot), ref, atol=1e-5).item())
+
         with self.assertRaises(ValueError):
             mx.linalg.expm(mx.zeros((3, 2)))
         with self.assertRaises(ValueError):
@@ -1012,9 +1024,7 @@ class TestLinalg(mlx_tests.MLXTestCase):
         z = mx.zeros((4, 5, 5))
         out = mx.linalg.expm(z)
         self.assertEqual(out.shape, (4, 5, 5))
-        self.assertTrue(
-            mx.allclose(out, mx.broadcast_to(mx.eye(5), (4, 5, 5))).item()
-        )
+        self.assertTrue(mx.allclose(out, mx.broadcast_to(mx.eye(5), (4, 5, 5))).item())
 
         # SciPy reference (float32)
         try:
@@ -1041,9 +1051,7 @@ class TestLinalg(mlx_tests.MLXTestCase):
         u = mx.linalg.expm(a, stream=mx.cpu)
         uh_u = u.conj().swapaxes(-1, -2) @ u
         ident = mx.eye(4).astype(mx.complex64)
-        self.assertTrue(
-            mx.allclose(uh_u, ident, atol=2e-4, rtol=2e-4).item()
-        )
+        self.assertTrue(mx.allclose(uh_u, ident, atol=2e-4, rtol=2e-4).item())
 
         # vmap over leading batch
         mats = mx.random.normal((8, 3, 3)) * 0.1
