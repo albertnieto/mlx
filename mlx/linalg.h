@@ -116,4 +116,14 @@ MLX_API array det(const array& a, StreamOrDevice s = {});
 
 MLX_API std::pair<array, array> slogdet(const array& a, StreamOrDevice s = {});
 
+/**
+ * Compute the matrix exponential of a square matrix (or a stack of square
+ * matrices) using scaling-and-squaring with an optimized degree-8 Taylor
+ * polynomial.
+ *
+ * The last two dimensions of ``a`` must be equal. Half-precision inputs are
+ * promoted to float32 for the computation and cast back.
+ */
+MLX_API array expm(const array& a, StreamOrDevice s = {});
+
 } // namespace mlx::core::linalg

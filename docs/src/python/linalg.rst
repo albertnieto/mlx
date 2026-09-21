@@ -25,5 +25,6 @@ Linear Algebra
     lu_factor
     pinv
     slogdet
+    expm
     solve
     solve_triangular

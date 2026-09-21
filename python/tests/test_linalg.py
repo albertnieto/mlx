@@ -993,6 +993,83 @@ class TestLinalg(mlx_tests.MLXTestCase):
         with self.assertRaises(ValueError):
             mx.linalg.slogdet(mx.eye(4).astype(mx.complex64), stream=mx.cpu)
 
+    def test_expm(self):
+        I = mx.eye(3)
+        out = mx.linalg.expm(mx.zeros((3, 3)))
+        self.assertTrue(mx.allclose(out, I).item())
+
+        a = mx.array([[0.2]])
+        self.assertTrue(mx.allclose(mx.linalg.expm(a), mx.exp(a)).item())
+
+        with self.assertRaises(ValueError):
+            mx.linalg.expm(mx.zeros((3, 2)))
+        with self.assertRaises(ValueError):
+            mx.linalg.expm(mx.zeros((4,)))
+        with self.assertRaises(ValueError):
+            mx.linalg.expm(mx.zeros((2, 2), dtype=mx.int32))
+
+        # Batch of identities
+        z = mx.zeros((4, 5, 5))
+        out = mx.linalg.expm(z)
+        self.assertEqual(out.shape, (4, 5, 5))
+        self.assertTrue(
+            mx.allclose(out, mx.broadcast_to(mx.eye(5), (4, 5, 5))).item()
+        )
+
+        # SciPy reference (float32)
+        try:
+            from scipy.linalg import expm as scipy_expm
+        except ImportError:
+            scipy_expm = None
+        if scipy_expm is not None:
+            rng = np.random.default_rng(0)
+            a_np = rng.standard_normal((6, 6)).astype(np.float32) * 0.3
+            ref = scipy_expm(a_np)
+            got = np.array(mx.linalg.expm(mx.array(a_np)))
+            self.assertTrue(np.allclose(got, ref, atol=2e-5, rtol=2e-5))
+
+            a_b = rng.standard_normal((3, 4, 4)).astype(np.float32) * 0.2
+            ref_b = np.stack([scipy_expm(m) for m in a_b])
+            got_b = np.array(mx.linalg.expm(mx.array(a_b)))
+            self.assertTrue(np.allclose(got_b, ref_b, atol=2e-5, rtol=2e-5))
+
+        # Unitarity of expm of iH for small Hermitian H (complex, CPU-safe)
+        rng = np.random.default_rng(1)
+        h = rng.standard_normal((4, 4)).astype(np.float32)
+        h = 0.5 * (h + h.T)
+        a = mx.array(1j * h, dtype=mx.complex64)
+        u = mx.linalg.expm(a, stream=mx.cpu)
+        uh_u = u.conj().swapaxes(-1, -2) @ u
+        ident = mx.eye(4).astype(mx.complex64)
+        self.assertTrue(
+            mx.allclose(uh_u, ident, atol=2e-4, rtol=2e-4).item()
+        )
+
+        # vmap over leading batch
+        mats = mx.random.normal((8, 3, 3)) * 0.1
+        batched = mx.linalg.expm(mats)
+        vmapped = mx.vmap(mx.linalg.expm)(mats)
+        self.assertTrue(mx.allclose(batched, vmapped, atol=1e-5, rtol=1e-5).item())
+
+        # JVP matches a finite-difference directional derivative
+        a = mx.random.normal((3, 3)) * 0.05
+        t = mx.random.normal((3, 3)) * 0.01
+        _, jvp_out = mx.jvp(mx.linalg.expm, [a], [t])
+        eps = 1e-3
+        fd = (mx.linalg.expm(a + eps * t) - mx.linalg.expm(a - eps * t)) / (2 * eps)
+        self.assertTrue(mx.allclose(jvp_out[0], fd, atol=2e-3, rtol=2e-3).item())
+
+        # Range: huge 1-norm should return NaNs rather than under-square
+        huge = mx.ones((2, 2)) * 1e8
+        out = mx.linalg.expm(huge)
+        self.assertTrue(mx.isnan(out).all().item())
+
+        # Half precision promotes (result is finite, float16)
+        a16 = (mx.random.normal((3, 3)) * 0.05).astype(mx.float16)
+        out16 = mx.linalg.expm(a16)
+        self.assertEqual(out16.dtype, mx.float16)
+        self.assertTrue(mx.isfinite(out16.astype(mx.float32)).all().item())
+
 
 if __name__ == "__main__":
     mlx_tests.MLXTestRunner()

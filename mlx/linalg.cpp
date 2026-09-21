@@ -1,5 +1,6 @@
 // Copyright © 2023 Apple Inc.
 
+#include <limits>
 #include <numeric>
 #include <ostream>
 #include <vector>
@@ -892,6 +893,127 @@ array det(const array& a, StreamOrDevice s /* = {} */) {
   // General case: det = sign * exp(logabsdet)
   auto [sign_val, logabsdet] = slogdet_impl(input, s);
   return multiply(sign_val, exp(logabsdet, s), s);
+}
+
+namespace {
+
+array unsqueeze_to_ndim(array x, int ndim, StreamOrDevice s) {
+  while (static_cast<int>(x.ndim()) < ndim) {
+    x = expand_dims(std::move(x), -1, s);
+  }
+  return x;
+}
+
+array identity_like(const array& a, StreamOrDevice s) {
+  int n = a.shape(-1);
+  // Build a real identity then cast. Direct complex eye uses a scatter
+  // path that is not implemented on GPU.
+  array I = astype(eye(n, float32, s), a.dtype(), s);
+  return broadcast_to(std::move(I), a.shape(), s);
+}
+
+array taylor8_optimized(const array& a, StreamOrDevice s) {
+  // Bader, Blanes & Casas (2019) degree-8 Taylor, 3 matmuls.
+  auto sc = [&](double v) { return astype(array(v), a.dtype(), s); };
+  constexpr double sqrt_177 = 13.30413469565007072504;
+  constexpr double x3 = 2.0 / 3.0;
+  const double x1 = x3 * ((1.0 + sqrt_177) / 88.0);
+  const double x2 = x3 * ((1.0 + sqrt_177) / 352.0);
+  const double x4 = (-271.0 + 29.0 * sqrt_177) / (315.0 * x3);
+  const double x5 = (-11.0 + 11.0 * sqrt_177) / (1260.0 * x3);
+  const double x6 = (-99.0 + 11.0 * sqrt_177) / (5040.0 * x3);
+  const double x7 = (89.0 - sqrt_177) / (5040.0 * x3);
+  const double y2 = (857.0 - 58.0 * sqrt_177) / 630.0;
+
+  auto I = identity_like(a, s);
+  auto a2 = matmul(a, a, s);
+  auto a4 = matmul(
+      a2, add(multiply(sc(x1), a, s), multiply(sc(x2), a2, s), s), s);
+  auto a8 = matmul(
+      add(multiply(sc(x3), a2, s), a4, s),
+      add(add(
+              add(multiply(sc(x4), I, s), multiply(sc(x5), a, s), s),
+              multiply(sc(x6), a2, s),
+              s),
+          multiply(sc(x7), a4, s),
+          s),
+      s);
+  return add(add(add(I, a, s), multiply(sc(y2), a2, s), s), a8, s);
+}
+
+} // namespace
+
+array expm(const array& a, StreamOrDevice s /* = {} */) {
+  if (a.ndim() < 2) {
+    std::ostringstream msg;
+    msg << "[linalg::expm] Got array with too few dimensions. "
+        << "Expected an array with at least 2 dimensions but got "
+        << a.ndim() << " dimensions instead.";
+    throw std::invalid_argument(msg.str());
+  }
+  if (a.shape(-1) != a.shape(-2)) {
+    std::ostringstream msg;
+    msg << "[linalg::expm] Last two dimensions of the array must be equal. "
+        << "Got array with shape " << a.shape() << ".";
+    throw std::invalid_argument(msg.str());
+  }
+  if (!issubdtype(a.dtype(), inexact)) {
+    std::ostringstream msg;
+    msg << "[linalg::expm] Arrays must have a floating or complex type. "
+        << "Received array with type " << a.dtype() << ".";
+    throw std::invalid_argument(msg.str());
+  }
+
+  auto out_dtype = a.dtype();
+  auto work = a;
+  if (out_dtype == float16 || out_dtype == bfloat16) {
+    work = astype(a, float32, s);
+  }
+
+  int n = work.shape(-1);
+  if (n == 0) {
+    return astype(work, out_dtype, s);
+  }
+  if (n == 1) {
+    return astype(exp(work, s), out_dtype, s);
+  }
+
+  // Induced 1-norm: max column sum of |A|.
+  auto norm = max(sum(abs(work, s), /* axis = */ -2, /* keepdims = */ false, s),
+                  /* axis = */ -1,
+                  /* keepdims = */ false,
+                  s);
+
+  constexpr int max_squarings = 16;
+  constexpr double theta = 0.5;
+  auto one = array(1.0, float32);
+  auto ratio = maximum(divide(norm, array(theta), s), one, s);
+  ratio = astype(ratio, float32, s);
+  auto s_int = maximum(
+      astype(ceil(log2(ratio, s), s), int32, s), array(0, int32), s);
+
+  auto scale = power(array(2.0, float32), astype(s_int, float32, s), s);
+  scale = unsqueeze_to_ndim(std::move(scale), static_cast<int>(work.ndim()), s);
+  auto a_scaled = divide(work, astype(scale, work.dtype(), s), s);
+
+  auto out = taylor8_optimized(a_scaled, s);
+
+  // Fixed-length masked squaring: graph-safe (no host .item() on s).
+  for (int i = 0; i < max_squarings; ++i) {
+    auto need = greater(s_int, array(i, int32), s);
+    need = unsqueeze_to_ndim(std::move(need), static_cast<int>(out.ndim()), s);
+    out = where(need, matmul(out, out, s), out, s);
+  }
+
+  auto valid = less_equal(s_int, array(max_squarings, int32), s);
+  valid = unsqueeze_to_ndim(std::move(valid), static_cast<int>(out.ndim()), s);
+  auto invalid = full(
+      out.shape(),
+      array(std::numeric_limits<float>::quiet_NaN()),
+      out.dtype(),
+      s);
+  out = where(valid, out, invalid, s);
+  return astype(std::move(out), out_dtype, s);
 }
 
 } // namespace mlx::core::linalg

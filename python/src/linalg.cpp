@@ -731,6 +731,46 @@ void init_linalg(nb::module_& parent_module) {
             >>> logabsdet
             array(0.693147, dtype=float32)
       )pbdoc");
+
+  m.def(
+      "expm",
+      [](const mx::array& a, mx::StreamOrDevice s) {
+        return mx::linalg::expm(a, s);
+      },
+      "a"_a,
+      nb::kw_only(),
+      "stream"_a = nb::none(),
+      nb::sig("def expm(a: array, *, stream: StreamOrDevice = None) -> array"),
+      R"pbdoc(
+        Compute the matrix exponential of a square matrix.
+
+        This function supports arrays with at least 2 dimensions. When the
+        input has more than two dimensions, the matrix exponential is computed
+        for each matrix in the last two dimensions.
+
+        The implementation uses scaling-and-squaring with an optimized
+        degree-8 Taylor polynomial (Bader, Blanes and Casas, 2019). It is
+        composed of matmul / add / abs operations and runs on GPU, including
+        for ``complex64`` inputs.
+
+        ``float16`` and ``bfloat16`` inputs are promoted to ``float32`` for
+        the computation. Inputs whose 1-norm requires more than 16 scalings
+        return NaNs rather than a silently inaccurate result.
+
+        Args:
+            a (array): Input array with shape ``(..., N, N)``.
+            stream (Stream, optional): Stream or device. Defaults to ``None``
+              in which case the default stream of the default device is used.
+
+        Returns:
+            array: The matrix exponential of ``a``.
+
+        Example:
+            >>> A = mx.zeros((2, 2))
+            >>> mx.linalg.expm(A)
+            array([[1, 0],
+                   [0, 1]], dtype=float32)
+      )pbdoc");
   // Array API standard aliases (https://data-apis.org/array-api/latest/).
   parent_module.attr("matrix_norm") = m.attr("norm");
 }
